@@ -1,0 +1,265 @@
+<script>
+  let EVAL_FORM_STATE = { criteria: [], agents: [], editingId: null };
+
+  // ============ صفحة: تقييم مكالمة جديدة ============
+  function loadNewEvaluationPage(prefillEvaluation) {
+    const container = document.getElementById('page-new-evaluation');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+
+    Promise.all([
+      apiAuth('getCriteria'),
+      apiAuth('getAgentsForEvaluation')
+    ]).then(([criteriaRes, agentsRes]) => {
+      if (!criteriaRes.success || !agentsRes.success) {
+        container.innerHTML = '<div class="card">تعذر تحميل البيانات</div>';
+        return;
+      }
+      EVAL_FORM_STATE.criteria = criteriaRes.criteria;
+      EVAL_FORM_STATE.agents = agentsRes.agents;
+      renderEvaluationForm(prefillEvaluation || null);
+    });
+  }
+
+  function renderEvaluationForm(prefill) {
+    const container = document.getElementById('page-new-evaluation');
+    const { criteria, agents } = EVAL_FORM_STATE;
+    EVAL_FORM_STATE.editingId = prefill ? prefill.EvaluationID : null;
+
+    const now = new Date();
+    const defaultDateTime = prefill ? toDatetimeLocal(prefill.CallDateTime) : toDatetimeLocal(now);
+
+    const agentOptions = agents.map(a =>
+      `<option value="${a.AgentID}" ${prefill && prefill.AgentID === a.AgentID ? 'selected' : ''}>${escapeHtml(a.AgentName)}${a.Team ? ' — ' + escapeHtml(a.Team) : ''}</option>`
+    ).join('');
+
+    const slidersHtml = criteria.map(c => {
+      const val = prefill && prefill.Scores && prefill.Scores[c.CriteriaID] !== undefined ? prefill.Scores[c.CriteriaID] : 80;
+      return `
+        <div class="score-slider-row">
+          <div class="slider-label">${escapeHtml(c.CriteriaName)} <span class="slider-weight">(${c.Weight}%)</span></div>
+          <input type="range" min="0" max="100" value="${val}" id="crit-${c.CriteriaID}" oninput="onSliderChange('${c.CriteriaID}')">
+          <div class="slider-value" id="crit-val-${c.CriteriaID}">${val}</div>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="card" style="max-width:760px;">
+        <div class="card-title">${prefill ? 'تعديل تقييم مكالمة' : 'بيانات المكالمة'}</div>
+
+        ${agents.length === 0 ? `
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div>لا يوجد موظفون مخصصون لك حالياً. تواصل مع المشرف لتخصيص موظفين.</div>
+          </div>` : `
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">الموظف</label>
+            <select id="eval-agent" class="form-control">${agentOptions}</select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">تاريخ ووقت المكالمة</label>
+            <input type="datetime-local" id="eval-datetime" class="form-control" value="${defaultDateTime}">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">معرّف المكالمة (اختياري)</label>
+          <input type="text" id="eval-callref" class="form-control" placeholder="رقم المكالمة أو الزبون" value="${prefill ? escapeHtml(prefill.CallRef || '') : ''}">
+        </div>
+
+        <div class="card-title" style="margin-top:10px;">معايير التقييم</div>
+        <div id="sliders-container">${slidersHtml}</div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg-surface-alt); border-radius:12px; padding:14px 18px; margin:18px 0;">
+          <span style="font-weight:700; font-size:14px;">الدرجة الإجمالية المتوقعة</span>
+          <span id="total-score-preview" style="font-weight:800; font-size:22px; color:var(--gold-600);">-</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">ملاحظات</label>
+          <textarea id="eval-notes" class="form-control" placeholder="أي ملاحظات إضافية عن المكالمة...">${prefill ? escapeHtml(prefill.Notes || '') : ''}</textarea>
+        </div>
+
+        <button class="btn btn-primary" id="submit-eval-btn" onclick="submitEvaluationForm()">${prefill ? 'حفظ التعديلات' : 'حفظ التقييم'}</button>
+        ${prefill ? '<button class="btn btn-outline" style="margin-right:8px;" onclick="loadNewEvaluationPage()">إلغاء</button>' : ''}
+        `}
+      </div>`;
+
+    if (agents.length > 0) updateTotalScorePreview();
+  }
+
+  function onSliderChange(criteriaId) {
+    const val = document.getElementById('crit-' + criteriaId).value;
+    document.getElementById('crit-val-' + criteriaId).textContent = val;
+    updateTotalScorePreview();
+  }
+
+  function updateTotalScorePreview() {
+    let total = 0;
+    EVAL_FORM_STATE.criteria.forEach(c => {
+      const el = document.getElementById('crit-' + c.CriteriaID);
+      if (el) total += Number(el.value) * c.Weight / 100;
+    });
+    document.getElementById('total-score-preview').textContent = Math.round(total * 100) / 100;
+  }
+
+  function toDatetimeLocal(d) {
+    const dt = new Date(d);
+    const pad = n => String(n).padStart(2, '0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  }
+
+  function submitEvaluationForm() {
+    const agentId = document.getElementById('eval-agent').value;
+    const dateTime = document.getElementById('eval-datetime').value;
+    const callRef = document.getElementById('eval-callref').value;
+    const notes = document.getElementById('eval-notes').value;
+
+    const scores = {};
+    EVAL_FORM_STATE.criteria.forEach(c => {
+      scores[c.CriteriaID] = Number(document.getElementById('crit-' + c.CriteriaID).value);
+    });
+
+    const btn = document.getElementById('submit-eval-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loader"></span>';
+
+    const payload = { AgentID: agentId, CallDateTime: new Date(dateTime), CallRef: callRef, Scores: scores, Notes: notes };
+
+    const call = EVAL_FORM_STATE.editingId
+      ? apiAuth('updateEvaluation', EVAL_FORM_STATE.editingId, payload)
+      : apiAuth('submitEvaluation', payload);
+
+    call.then(res => {
+      btn.disabled = false;
+      btn.textContent = EVAL_FORM_STATE.editingId ? 'حفظ التعديلات' : 'حفظ التقييم';
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تم حفظ التقييم بنجاح — الدرجة: ' + res.totalScore);
+      if (EVAL_FORM_STATE.editingId) {
+        navigateTo('my-reports');
+      } else {
+        loadNewEvaluationPage(); // نموذج جديد فارغ لمكالمة تالية
+      }
+    }).catch(() => {
+      btn.disabled = false;
+      btn.textContent = 'حفظ التقييم';
+      showToast('حدث خطأ أثناء الحفظ', 'error');
+    });
+  }
+
+  // ============ صفحة: تقاريري ============
+  function loadMyReportsPage() {
+    const container = document.getElementById('page-my-reports');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+
+    Promise.all([apiAuth('getEvaluatorReport', null), apiAuth('getMyEvaluations')]).then(([reportRes, evalsRes]) => {
+      if (!reportRes.success) { container.innerHTML = '<div class="card">تعذر تحميل التقرير</div>'; return; }
+      renderMyReportsPage(reportRes.report, evalsRes.success ? evalsRes.evaluations : []);
+    });
+  }
+
+  function renderMyReportsPage(report, evaluations) {
+    const container = document.getElementById('page-my-reports');
+    const coverageWarning = report.notEvaluatedAgents.length > 0
+      ? `<div class="badge badge-warning" style="margin-top:10px;">⚠ لم يتم تقييم: ${report.notEvaluatedAgents.slice(0,5).join('، ')}${report.notEvaluatedAgents.length > 5 ? ' وغيرهم' : ''}</div>` : '';
+
+    const targetStatus = report.todayCount >= report.dailyTargetMin
+      ? `<span class="badge badge-success">ضمن الهدف اليومي</span>`
+      : `<span class="badge badge-danger">دون الهدف (${report.dailyTargetMin}-${report.dailyTargetMax})</span>`;
+
+    const maxDaily = Math.max(1, ...Object.values(report.dailyCounts));
+    const barsHtml = buildLast30DaysBars(report.dailyCounts, maxDaily);
+
+    const criteriaRows = report.criteriaAverages.map(c => `
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+        <div style="width:160px; font-size:13px; font-weight:600;">${escapeHtml(c.CriteriaName)}</div>
+        <div style="flex:1; background:var(--bg-surface-alt); border-radius:8px; height:10px; overflow:hidden;">
+          <div style="width:${c.Average}%; background:var(--gold-500); height:100%;"></div>
+        </div>
+        <div style="width:36px; text-align:left; font-weight:700; font-size:13px;">${c.Average}</div>
+      </div>`).join('');
+
+    const evalRows = evaluations.slice(0, 50).map(e => `
+      <tr>
+        <td>${escapeHtml(e.AgentName)}</td>
+        <td>${formatDateTime(e.CallDateTime)}</td>
+        <td><span class="badge ${scoreBadgeClass(e.TotalScore)}">${e.TotalScore}</span></td>
+        <td>${escapeHtml((e.Notes || '').slice(0, 40))}</td>
+        <td><span class="btn btn-outline btn-sm" onclick="editMyEvaluation('${e.EvaluationID}')">تعديل</span></td>
+      </tr>`).join('');
+
+    container.innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">مكالمات اليوم</div>
+          <div class="stat-value">${report.todayCount}</div>
+          <div class="stat-sub">${targetStatus}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">هذا الأسبوع</div>
+          <div class="stat-value">${report.weekCount}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">هذا الشهر</div>
+          <div class="stat-value">${report.monthCount}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">الإجمالي</div>
+          <div class="stat-value">${report.totalCount}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px; display:flex; gap:28px; align-items:center; flex-wrap:wrap;">
+        <div style="text-align:center;">
+          ${renderScoreDial(report.avgScore, 96)}
+          <div style="font-size:12.5px; color:var(--text-secondary); margin-top:8px;">متوسط الدرجة الإجمالية</div>
+        </div>
+        <div style="flex:1; min-width:220px;">
+          <div class="card-title" style="margin-bottom:10px;">تغطية الموظفين</div>
+          <div style="font-size:14px;">قيّمت <strong>${report.evaluatedAgentsCount}</strong> من أصل <strong>${report.assignedAgentsCount}</strong> موظف مخصص لك</div>
+          ${coverageWarning}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">متوسط الأداء حسب المعيار</div>
+        ${criteriaRows || '<div class="empty-state">لا توجد بيانات كافية بعد</div>'}
+      </div>
+
+      <div class="card">
+        <div class="card-title">نشاط آخر 30 يوم</div>
+        <div class="bar-chart">${barsHtml}</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">سجل تقييماتي</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>الموظف</th><th>تاريخ المكالمة</th><th>الدرجة</th><th>ملاحظات</th><th></th></tr></thead>
+            <tbody>${evalRows || '<tr><td colspan="5" style="text-align:center; padding:24px;">لا توجد تقييمات بعد</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildLast30DaysBars(dailyCounts, maxDaily) {
+    let bars = '';
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today); d.setDate(d.getDate() - i);
+      const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      const count = dailyCounts[key] || 0;
+      const heightPct = Math.max(3, (count / maxDaily) * 100);
+      bars += `<div class="bar" style="height:${heightPct}%;" title="${key}: ${count}"></div>`;
+    }
+    return bars;
+  }
+
+  function editMyEvaluation(evaluationId) {
+    apiAuth('getEvaluationById', evaluationId).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      navigateTo('new-evaluation');
+      loadNewEvaluationPage(res.evaluation);
+    });
+  }
+</script>

@@ -1,0 +1,52 @@
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="dot-ring"><div class="dot"></div></div>
+      <h2>نظام تقييم جودة الأداء</h2>
+      <p>مركز خدمة العملاء</p>
+    </div>
+
+    <div id="login-error" class="login-error"></div>
+
+    <div class="form-group">
+      <label class="form-label">اسم المستخدم</label>
+      <input type="text" id="login-username" class="form-control" placeholder="أدخل اسم المستخدم" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label class="form-label">كلمة السر</label>
+      <input type="password" id="login-password" class="form-control" placeholder="أدخل كلمة السر" autocomplete="current-password">
+    </div>
+
+    <button id="login-btn" class="btn btn-primary btn-block" onclick="handleLogin()">
+      <span id="login-btn-text">تسجيل الدخول</span>
+    </button>
+  </div>
+</div>
+
+<!-- شاشة إجبار تغيير كلمة السر -->
+<div id="force-change-screen" class="login-wrap" style="display:none;">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="dot-ring"><div class="dot"></div></div>
+      <h2>تغيير كلمة السر مطلوب</h2>
+      <p>لأسباب أمنية، يجب تعيين كلمة سر جديدة قبل المتابعة</p>
+    </div>
+
+    <div id="force-change-error" class="login-error"></div>
+
+    <div class="form-group">
+      <label class="form-label">كلمة السر الحالية</label>
+      <input type="password" id="fc-old-password" class="form-control">
+    </div>
+    <div class="form-group">
+      <label class="form-label">كلمة السر الجديدة</label>
+      <input type="password" id="fc-new-password" class="form-control">
+    </div>
+    <div class="form-group">
+      <label class="form-label">تأكيد كلمة السر الجديدة</label>
+      <input type="password" id="fc-confirm-password" class="form-control">
+    </div>
+
+    <button class="btn btn-primary btn-block" onclick="handleForceChangePassword()">حفظ والمتابعة</button>
+  </div>
+</div>

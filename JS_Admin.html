@@ -1,0 +1,534 @@
+<script>
+  // ============================================================
+  // 1) إدارة المعايير (أدمن فقط)
+  // ============================================================
+  let CRITERIA_STATE = [];
+
+  function loadCriteriaManagementPage() {
+    const container = document.getElementById('page-criteria-management');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+    apiAuth('getCriteria').then(res => {
+      if (!res.success) { container.innerHTML = '<div class="card">تعذر التحميل: ' + res.message + '</div>'; return; }
+      CRITERIA_STATE = res.criteria.map(c => ({ ...c }));
+      renderCriteriaManagement();
+    });
+  }
+
+  function renderCriteriaManagement() {
+    const container = document.getElementById('page-criteria-management');
+    const total = CRITERIA_STATE.reduce((s, c) => s + Number(c.Weight), 0);
+
+    const rows = CRITERIA_STATE.map((c, idx) => `
+      <tr>
+        <td><input class="form-control" style="min-width:200px;" value="${escapeHtml(c.CriteriaName)}" oninput="CRITERIA_STATE[${idx}].CriteriaName=this.value"></td>
+        <td><input class="form-control" type="number" min="0" max="100" style="width:90px;" value="${c.Weight}" oninput="CRITERIA_STATE[${idx}].Weight=this.value; updateCriteriaTotal();"></td>
+        <td><input class="form-control" type="number" style="width:70px;" value="${c.DisplayOrder}" oninput="CRITERIA_STATE[${idx}].DisplayOrder=this.value"></td>
+        <td><span class="btn btn-danger btn-sm" onclick="removeCriteriaRow(${idx})">حذف</span></td>
+      </tr>`).join('');
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-title">معايير التقييم والنسب</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>اسم المعيار</th><th>النسبة %</th><th>الترتيب</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="addCriteriaRow()">+ إضافة معيار</button>
+
+        <div style="margin-top:20px; display:flex; align-items:center; justify-content:space-between; background:var(--bg-surface-alt); padding:14px 18px; border-radius:12px;">
+          <span style="font-weight:700;">مجموع النسب</span>
+          <span id="criteria-total" style="font-weight:800; font-size:18px; color:${total === 100 ? 'var(--success)' : 'var(--danger)'};">${total}%</span>
+        </div>
+
+        <button class="btn btn-primary" style="margin-top:16px;" onclick="saveCriteriaChanges()">حفظ التغييرات</button>
+      </div>`;
+  }
+
+  function updateCriteriaTotal() {
+    const total = CRITERIA_STATE.reduce((s, c) => s + Number(c.Weight || 0), 0);
+    const el = document.getElementById('criteria-total');
+    el.textContent = total + '%';
+    el.style.color = total === 100 ? 'var(--success)' : 'var(--danger)';
+  }
+
+  function addCriteriaRow() {
+    CRITERIA_STATE.push({ CriteriaID: '', CriteriaName: 'معيار جديد', Weight: 0, DisplayOrder: CRITERIA_STATE.length + 1 });
+    renderCriteriaManagement();
+  }
+
+  function removeCriteriaRow(idx) {
+    CRITERIA_STATE.splice(idx, 1);
+    renderCriteriaManagement();
+  }
+
+  function saveCriteriaChanges() {
+    apiAuth('saveCriteria', CRITERIA_STATE).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تم حفظ المعايير بنجاح');
+      loadCriteriaManagementPage();
+    });
+  }
+
+  // ============================================================
+  // 2) إدارة الموظفين (مشرف + أدمن)
+  // ============================================================
+  let AGENTS_STATE = [];
+
+  function loadAgentsManagementPage() {
+    const container = document.getElementById('page-agents-management');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+    apiAuth('getAllAgents').then(res => {
+      if (!res.success) { container.innerHTML = '<div class="card">تعذر التحميل: ' + res.message + '</div>'; return; }
+      AGENTS_STATE = res.agents;
+      renderAgentsManagement();
+    });
+  }
+
+  function renderAgentsManagement(searchTerm) {
+    const container = document.getElementById('page-agents-management');
+    const term = (searchTerm || '').trim();
+    const filtered = term ? AGENTS_STATE.filter(a => a.AgentName.includes(term)) : AGENTS_STATE;
+
+    const rows = filtered.map(a => `
+      <tr>
+        <td>${escapeHtml(a.AgentName)}</td>
+        <td>${escapeHtml(a.EmployeeNumber || '-')}</td>
+        <td>${escapeHtml(a.Team || '-')}</td>
+        <td>${a.IsActive ? '<span class="badge badge-success">نشط</span>' : '<span class="badge badge-danger">معطّل</span>'}</td>
+        <td style="display:flex; gap:6px;">
+          <span class="btn btn-outline btn-sm" onclick="openEditAgentModal('${a.AgentID}')">تعديل</span>
+          <span class="btn ${a.IsActive ? 'btn-danger' : 'btn-primary'} btn-sm" onclick="toggleAgent('${a.AgentID}', ${!a.IsActive})">${a.IsActive ? 'تعطيل' : 'تفعيل'}</span>
+        </td>
+      </tr>`).join('');
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-title">إضافة موظف جديد</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">اسم الموظف</label><input class="form-control" id="new-agent-name"></div>
+          <div class="form-group"><label class="form-label">رقم الموظف (اختياري)</label><input class="form-control" id="new-agent-number"></div>
+        </div>
+        <div class="form-group"><label class="form-label">الفريق/الشفت (اختياري)</label><input class="form-control" id="new-agent-team"></div>
+        <button class="btn btn-primary" onclick="addNewAgent()">إضافة الموظف</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">استيراد جماعي</div>
+        <div class="form-group">
+          <label class="form-label">الصق أسماء الموظفين (اسم واحد بكل سطر)</label>
+          <textarea class="form-control" id="bulk-agents-text" placeholder="أحمد محمد
+سارة علي
+..."></textarea>
+        </div>
+        <button class="btn btn-outline" onclick="bulkImportAgentsHandler()">استيراد الأسماء</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">قائمة الموظفين (${filtered.length} من ${AGENTS_STATE.length})</div>
+        <div class="search-bar">
+          <input class="form-control" placeholder="بحث بالاسم..." oninput="renderAgentsManagement(this.value)" value="${escapeHtml(term)}">
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>الاسم</th><th>رقم الموظف</th><th>الفريق</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="5" style="text-align:center; padding:20px;">لا يوجد موظفون</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  function addNewAgent() {
+    const name = document.getElementById('new-agent-name').value.trim();
+    if (!name) { showToast('الرجاء إدخال اسم الموظف', 'error'); return; }
+    const data = {
+      AgentName: name,
+      EmployeeNumber: document.getElementById('new-agent-number').value.trim(),
+      Team: document.getElementById('new-agent-team').value.trim()
+    };
+    apiAuth('addAgent', data).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تمت إضافة الموظف بنجاح');
+      loadAgentsManagementPage();
+    });
+  }
+
+  function bulkImportAgentsHandler() {
+    const text = document.getElementById('bulk-agents-text').value;
+    if (!text.trim()) { showToast('الرجاء لصق قائمة الأسماء', 'error'); return; }
+    apiAuth('bulkImportAgents', text).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تمت إضافة ' + res.count + ' موظف بنجاح');
+      loadAgentsManagementPage();
+    });
+  }
+
+  function toggleAgent(agentId, newState) {
+    apiAuth('toggleAgentActive', agentId, newState).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast(newState ? 'تم تفعيل الموظف' : 'تم تعطيل الموظف');
+      loadAgentsManagementPage();
+    });
+  }
+
+  function openEditAgentModal(agentId) {
+    const agent = AGENTS_STATE.find(a => a.AgentID === agentId);
+    if (!agent) return;
+    showModal('تعديل بيانات الموظف', `
+      <div class="form-group"><label class="form-label">اسم الموظف</label><input class="form-control" id="edit-agent-name" value="${escapeHtml(agent.AgentName)}"></div>
+      <div class="form-group"><label class="form-label">رقم الموظف</label><input class="form-control" id="edit-agent-number" value="${escapeHtml(agent.EmployeeNumber || '')}"></div>
+      <div class="form-group"><label class="form-label">الفريق/الشفت</label><input class="form-control" id="edit-agent-team" value="${escapeHtml(agent.Team || '')}"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="saveAgentEdit('${agentId}')">حفظ</button>
+        <button class="btn btn-outline" onclick="closeModal()">إلغاء</button>
+      </div>`);
+  }
+
+  function saveAgentEdit(agentId) {
+    const data = {
+      AgentName: document.getElementById('edit-agent-name').value.trim(),
+      EmployeeNumber: document.getElementById('edit-agent-number').value.trim(),
+      Team: document.getElementById('edit-agent-team').value.trim()
+    };
+    apiAuth('updateAgent', agentId, data).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تم حفظ التعديلات');
+      closeModal();
+      loadAgentsManagementPage();
+    });
+  }
+
+  // ============================================================
+  // 3) توزيع الموظفين (Matrix) — مشرف + أدمن
+  // ============================================================
+  let MATRIX_STATE = null;
+
+  function loadAssignmentsPage() {
+    const container = document.getElementById('page-assignments');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+    apiAuth('getAssignmentMatrix').then(res => {
+      if (!res.success) { container.innerHTML = '<div class="card">تعذر التحميل: ' + res.message + '</div>'; return; }
+      MATRIX_STATE = res;
+      renderAssignmentMatrix();
+    });
+  }
+
+  function renderAssignmentMatrix(searchTerm) {
+    const container = document.getElementById('page-assignments');
+    const { agents, evaluators, matrix } = MATRIX_STATE;
+    const term = (searchTerm || '').trim();
+    const filteredAgents = term ? agents.filter(a => a.AgentName.includes(term)) : agents;
+
+    const bulkOptions = evaluators.map(e => `<option value="${e.UserID}">${escapeHtml(e.FullName)}</option>`).join('');
+
+    const headerCols = evaluators.map(e => `<th>${escapeHtml(e.FullName)}</th>`).join('');
+
+    const rows = filteredAgents.map(agent => {
+      const cells = evaluators.map(ev => {
+        const checked = matrix[agent.AgentID] && matrix[agent.AgentID][ev.UserID];
+        return `<td><input type="checkbox" ${checked ? 'checked' : ''} onchange="onMatrixToggle('${agent.AgentID}','${ev.UserID}',this.checked)"></td>`;
+      }).join('');
+      return `<tr><td class="agent-col">${escapeHtml(agent.AgentName)}</td>${cells}</tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="search-bar">
+          <input class="form-control" placeholder="بحث بالاسم..." oninput="renderAssignmentMatrix(this.value)" value="${escapeHtml(term)}">
+          <span style="font-size:12.5px; color:var(--text-secondary); white-space:nowrap;">معروض ${filteredAgents.length} من ${agents.length}</span>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
+          <select id="bulk-evaluator-select" class="form-control" style="max-width:220px;">${bulkOptions}</select>
+          <button class="btn btn-outline btn-sm" onclick="bulkAssignAction(true)">تخصيص كل الموظفين المعروضين لهذا المقيّم</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAssignAction(false)">إزالة الجميع من هذا المقيّم</button>
+        </div>
+
+        <div class="matrix-wrap">
+          <table class="matrix-table">
+            <thead><tr><th class="agent-col-header">الموظف</th>${headerCols}</tr></thead>
+            <tbody>${rows || `<tr><td colspan="${evaluators.length + 1}" style="text-align:center; padding:20px;">لا نتائج</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  function onMatrixToggle(agentId, evaluatorId, isChecked) {
+    if (!MATRIX_STATE.matrix[agentId]) MATRIX_STATE.matrix[agentId] = {};
+    MATRIX_STATE.matrix[agentId][evaluatorId] = isChecked;
+    apiAuth('updateAssignment', agentId, evaluatorId, isChecked).then(res => {
+      if (!res.success) showToast(res.message, 'error');
+    });
+  }
+
+  function bulkAssignAction(isAssigned) {
+    const evaluatorId = document.getElementById('bulk-evaluator-select').value;
+    if (!evaluatorId) return;
+    const visibleAgentIds = MATRIX_STATE.agents.map(a => a.AgentID); // المصفوفة الحالية المعروضة (بعد الفلترة يمكن تحسينها لاحقاً)
+    apiAuth('bulkAssign', visibleAgentIds, evaluatorId, isAssigned).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تم تحديث التوزيع بنجاح');
+      loadAssignmentsPage();
+    });
+  }
+
+  // ============================================================
+  // 4) التقارير الشاملة (مشرف + أدمن)
+  // ============================================================
+  function loadComprehensiveReportsPage() {
+    const container = document.getElementById('page-comprehensive-reports');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+    apiAuth('getComprehensiveReport').then(res => {
+      if (!res.success) { container.innerHTML = '<div class="card">تعذر التحميل: ' + res.message + '</div>'; return; }
+      renderComprehensiveReport(res.report);
+    });
+  }
+
+  function renderComprehensiveReport(report) {
+    const container = document.getElementById('page-comprehensive-reports');
+
+    const agentRows = report.agentPerformance
+      .sort((a,b) => (a.AverageScore ?? 999) - (b.AverageScore ?? 999))
+      .map(a => `
+        <tr>
+          <td>${escapeHtml(a.AgentName)}</td>
+          <td>${a.EvaluationsCount}</td>
+          <td>${a.AverageScore !== null ? `<span class="badge ${scoreBadgeClass(a.AverageScore)}">${a.AverageScore}</span>` : '-'}</td>
+        </tr>`).join('');
+
+    const evalRows = report.evaluatorComparison.map(e => `
+      <tr>
+        <td>${escapeHtml(e.FullName)}</td>
+        <td>${e.EvaluationsCount}</td>
+        <td>${e.AverageScore !== null ? `<span class="badge ${scoreBadgeClass(e.AverageScore)}">${e.AverageScore}</span>` : '-'}</td>
+        <td>${e.LastActivity ? formatDateTime(e.LastActivity) : '-'}</td>
+      </tr>`).join('');
+
+    const weaknessRows = report.criteriaWeakness.map(c => `
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+        <div style="width:180px; font-size:13px; font-weight:600;">${escapeHtml(c.CriteriaName)}</div>
+        <div style="flex:1; background:var(--bg-surface-alt); border-radius:8px; height:10px; overflow:hidden;">
+          <div style="width:${c.Average || 0}%; background:${c.Average < 70 ? 'var(--danger)' : 'var(--gold-500)'}; height:100%;"></div>
+        </div>
+        <div style="width:36px; text-align:left; font-weight:700; font-size:13px;">${c.Average ?? '-'}</div>
+      </div>`).join('');
+
+    container.innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-label">إجمالي التقييمات</div><div class="stat-value">${report.totalEvaluations}</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">نقاط الضعف الشائعة (أقل المعايير أداءً)</div>
+        ${weaknessRows || '<div class="empty-state">لا توجد بيانات كافية</div>'}
+      </div>
+
+      <div class="card">
+        <div class="card-title">أداء الموظفين</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>الموظف</th><th>عدد المكالمات المقيّمة</th><th>متوسط الدرجة</th></tr></thead>
+            <tbody>${agentRows || '<tr><td colspan="3" style="text-align:center; padding:20px;">لا توجد بيانات</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">مقارنة المقيّمين</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>المقيّم</th><th>عدد التقييمات</th><th>متوسط الدرجة</th><th>آخر نشاط</th></tr></thead>
+            <tbody>${evalRows || '<tr><td colspan="4" style="text-align:center; padding:20px;">لا توجد بيانات</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  // ============================================================
+  // 5) إدارة المستخدمين (أدمن فقط)
+  // ============================================================
+  let USERS_STATE = [];
+
+  function loadUsersManagementPage() {
+    const container = document.getElementById('page-users-management');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+    apiAuth('getAllUsers').then(res => {
+      if (!res.success) { container.innerHTML = '<div class="card">تعذر التحميل: ' + res.message + '</div>'; return; }
+      USERS_STATE = res.users;
+      renderUsersManagement();
+    });
+  }
+
+  function renderUsersManagement() {
+    const container = document.getElementById('page-users-management');
+    const roleOptions = role => ['evaluator','supervisor','admin'].map(r =>
+      `<option value="${r}" ${r === role ? 'selected' : ''}>${roleLabel(r)}</option>`).join('');
+
+    const rows = USERS_STATE.map(u => `
+      <tr>
+        <td>${escapeHtml(u.FullName)}</td>
+        <td>${escapeHtml(u.Username)}</td>
+        <td><select class="form-control" style="max-width:130px;" onchange="changeUserRole('${u.UserID}', this.value)">${roleOptions(u.Role)}</select></td>
+        <td>${u.IsActive ? '<span class="badge badge-success">نشط</span>' : '<span class="badge badge-danger">معطّل</span>'}</td>
+        <td style="display:flex; gap:6px; flex-wrap:wrap;">
+          <span class="btn btn-outline btn-sm" onclick="resetPasswordHandler('${u.UserID}','${escapeHtml(u.FullName)}')">إعادة تعيين كلمة السر</span>
+          <span class="btn ${u.IsActive ? 'btn-danger' : 'btn-primary'} btn-sm" onclick="toggleUserActiveHandler('${u.UserID}', ${!u.IsActive})">${u.IsActive ? 'تعطيل' : 'تفعيل'}</span>
+        </td>
+      </tr>`).join('');
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-title">إضافة مستخدم جديد</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">الاسم الكامل</label><input class="form-control" id="new-user-name"></div>
+          <div class="form-group"><label class="form-label">اسم المستخدم</label><input class="form-control" id="new-user-username"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">كلمة السر المبدئية</label><input class="form-control" id="new-user-password"></div>
+          <div class="form-group">
+            <label class="form-label">الدور</label>
+            <select class="form-control" id="new-user-role">
+              <option value="evaluator">مقيّم</option>
+              <option value="supervisor">مشرف</option>
+              <option value="admin">أدمن</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="addNewUser()">إضافة المستخدم</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">المستخدمون (${USERS_STATE.length})</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الدور</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  function addNewUser() {
+    const data = {
+      FullName: document.getElementById('new-user-name').value.trim(),
+      Username: document.getElementById('new-user-username').value.trim(),
+      Password: document.getElementById('new-user-password').value,
+      Role: document.getElementById('new-user-role').value
+    };
+    if (!data.FullName || !data.Username || !data.Password) { showToast('الرجاء تعبئة كل الحقول', 'error'); return; }
+    apiAuth('addUser', data).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تمت إضافة المستخدم بنجاح');
+      loadUsersManagementPage();
+    });
+  }
+
+  function changeUserRole(userId, newRole) {
+    apiAuth('updateUserRole', userId, newRole).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast('تم تحديث الدور بنجاح');
+    });
+  }
+
+  function toggleUserActiveHandler(userId, newState) {
+    apiAuth('toggleUserActive', userId, newState).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showToast(newState ? 'تم تفعيل المستخدم' : 'تم تعطيل المستخدم');
+      loadUsersManagementPage();
+    });
+  }
+
+  function resetPasswordHandler(userId, fullName) {
+    apiAuth('resetUserPassword', userId).then(res => {
+      if (!res.success) { showToast(res.message, 'error'); return; }
+      showModal('تم إعادة تعيين كلمة السر', `
+        <p style="font-size:14px;">كلمة السر المؤقتة لـ <strong>${fullName}</strong>:</p>
+        <div style="background:var(--bg-surface-alt); padding:16px; border-radius:10px; text-align:center; font-size:24px; font-weight:800; letter-spacing:2px; margin:12px 0;">${res.tempPassword}</div>
+        <p style="font-size:12.5px; color:var(--text-secondary);">أرسل هذه الكلمة للمستخدم. سيُطلب منه تغييرها عند أول تسجيل دخول.</p>
+        <div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">تم</button></div>`);
+    });
+  }
+
+  // ============================================================
+  // 6) سجل التعديلات (أدمن فقط)
+  // ============================================================
+  function loadAuditLogPage() {
+    const container = document.getElementById('page-audit-log');
+    container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+    apiAuth('getAuditLog', {}).then(res => {
+      if (!res.success) { container.innerHTML = '<div class="card">تعذر التحميل: ' + res.message + '</div>'; return; }
+      renderAuditLog(res.logs);
+    });
+  }
+
+  function renderAuditLog(logs) {
+    const container = document.getElementById('page-audit-log');
+    const rows = logs.map(l => `
+      <tr>
+        <td>${formatDateTime(l.Timestamp)}</td>
+        <td>${escapeHtml(l.UserName)}</td>
+        <td><span class="badge badge-navy">${roleLabel(l.Role)}</span></td>
+        <td>${escapeHtml(l.ActionType)}</td>
+        <td>${escapeHtml(l.TargetItem)}</td>
+        <td>${escapeHtml(l.OldValue)}</td>
+        <td>${escapeHtml(l.NewValue)}</td>
+      </tr>`).join('');
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="search-bar">
+          <input class="form-control" id="audit-search-user" placeholder="بحث باسم المستخدم..." oninput="filterAuditLog()">
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>التاريخ/الوقت</th><th>المستخدم</th><th>الدور</th><th>العملية</th><th>العنصر</th><th>قبل</th><th>بعد</th></tr></thead>
+            <tbody id="audit-log-tbody">${rows || '<tr><td colspan="7" style="text-align:center; padding:20px;">لا توجد حركات مسجلة</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  function filterAuditLog() {
+    const term = document.getElementById('audit-search-user').value.trim();
+    apiAuth('getAuditLog', { userName: term }).then(res => {
+      if (!res.success) return;
+      const rows = res.logs.map(l => `
+        <tr>
+          <td>${formatDateTime(l.Timestamp)}</td>
+          <td>${escapeHtml(l.UserName)}</td>
+          <td><span class="badge badge-navy">${roleLabel(l.Role)}</span></td>
+          <td>${escapeHtml(l.ActionType)}</td>
+          <td>${escapeHtml(l.TargetItem)}</td>
+          <td>${escapeHtml(l.OldValue)}</td>
+          <td>${escapeHtml(l.NewValue)}</td>
+        </tr>`).join('');
+      document.getElementById('audit-log-tbody').innerHTML = rows || '<tr><td colspan="7" style="text-align:center; padding:20px;">لا نتائج</td></tr>';
+    });
+  }
+
+  // ============================================================
+  // نافذة منبثقة عامة (Modal)
+  // ============================================================
+  function showModal(title, bodyHtml) {
+    closeModal();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'active-modal';
+    overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+    overlay.innerHTML = `
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>${title}</h3>
+          <div class="modal-close" onclick="closeModal()">✕</div>
+        </div>
+        ${bodyHtml}
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+
+  function closeModal() {
+    const el = document.getElementById('active-modal');
+    if (el) el.remove();
+  }
+</script>

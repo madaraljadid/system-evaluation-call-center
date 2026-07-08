@@ -1,0 +1,280 @@
+<script>
+  // ============ الحالة العامة ============
+  let APP_STATE = {
+    token: null,
+    user: null,
+    currentPage: null,
+    criteriaCache: null
+  };
+
+  const NAV_ITEMS = [
+    { id: 'new-evaluation', label: 'تقييم مكالمة جديدة', roles: ['evaluator', 'supervisor', 'admin'],
+      icon: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>' },
+    { id: 'my-reports', label: 'تقاريري', roles: ['evaluator', 'supervisor', 'admin'],
+      icon: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>' },
+    { id: 'comprehensive-reports', label: 'التقارير الشاملة', roles: ['supervisor', 'admin'],
+      icon: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>' },
+    { id: 'agents-management', label: 'إدارة الموظفين', roles: ['supervisor', 'admin'],
+      icon: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
+    { id: 'assignments', label: 'توزيع الموظفين', roles: ['supervisor', 'admin'],
+      icon: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' },
+    { id: 'criteria-management', label: 'إدارة المعايير', roles: ['admin'],
+      icon: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+    { id: 'users-management', label: 'إدارة المستخدمين', roles: ['admin'],
+      icon: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>' },
+    { id: 'audit-log', label: 'سجل التعديلات', roles: ['admin'],
+      icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>' }
+  ];
+
+  const PAGE_TITLES = {
+    'new-evaluation': 'تقييم مكالمة جديدة',
+    'my-reports': 'تقاريري',
+    'comprehensive-reports': 'التقارير الشاملة',
+    'agents-management': 'إدارة الموظفين',
+    'assignments': 'توزيع الموظفين على المقيّمين',
+    'criteria-management': 'إدارة معايير التقييم',
+    'users-management': 'إدارة المستخدمين',
+    'audit-log': 'سجل التعديلات'
+  };
+
+  // ============ غلاف API موحّد (Promise حول google.script.run) ============
+  function api(functionName, ...args) {
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(err => reject(err))
+        [functionName](...args);
+    });
+  }
+
+  // كل الدوال الحساسة تحتاج token — هذا يضيفه تلقائياً كأول باراميتر
+  function apiAuth(functionName, ...args) {
+    return api(functionName, APP_STATE.token, ...args);
+  }
+
+  // ============ Toast ============
+  function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3500);
+  }
+
+  // ============ الوضع الليلي ============
+  function toggleTheme() {
+    const current = document.body.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    try { window.__themePref = next; } catch (e) {}
+  }
+
+  function applyTheme(theme) {
+    if (theme === 'dark') {
+      document.body.setAttribute('data-theme', 'dark');
+    } else {
+      document.body.removeAttribute('data-theme');
+    }
+  }
+
+  // ============ تسجيل الدخول ============
+  function handleLogin() {
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errorBox = document.getElementById('login-error');
+    const btnText = document.getElementById('login-btn-text');
+
+    errorBox.style.display = 'none';
+    if (!username || !password) {
+      errorBox.textContent = 'الرجاء إدخال اسم المستخدم وكلمة السر';
+      errorBox.style.display = 'block';
+      return;
+    }
+
+    btnText.innerHTML = '<span class="loader"></span>';
+
+    api('login', username, password).then(res => {
+      btnText.textContent = 'تسجيل الدخول';
+      if (!res.success) {
+        errorBox.textContent = res.message;
+        errorBox.style.display = 'block';
+        return;
+      }
+      APP_STATE.token = res.token;
+      APP_STATE.user = res.user;
+
+      if (res.user.mustChangePassword) {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('force-change-screen').style.display = 'flex';
+      } else {
+        enterApp();
+      }
+    }).catch(err => {
+      btnText.textContent = 'تسجيل الدخول';
+      errorBox.textContent = 'حدث خطأ، حاول مرة أخرى';
+      errorBox.style.display = 'block';
+    });
+  }
+
+  function handleForceChangePassword() {
+    const oldP = document.getElementById('fc-old-password').value;
+    const newP = document.getElementById('fc-new-password').value;
+    const confirmP = document.getElementById('fc-confirm-password').value;
+    const errorBox = document.getElementById('force-change-error');
+    errorBox.style.display = 'none';
+
+    if (!oldP || !newP || !confirmP) {
+      errorBox.textContent = 'الرجاء تعبئة كل الحقول';
+      errorBox.style.display = 'block';
+      return;
+    }
+    if (newP !== confirmP) {
+      errorBox.textContent = 'كلمة السر الجديدة غير متطابقة';
+      errorBox.style.display = 'block';
+      return;
+    }
+    if (newP.length < 4) {
+      errorBox.textContent = 'كلمة السر يجب أن تكون 4 أحرف/أرقام على الأقل';
+      errorBox.style.display = 'block';
+      return;
+    }
+
+    apiAuth('changeMyPassword', oldP, newP).then(res => {
+      if (!res.success) {
+        errorBox.textContent = res.message;
+        errorBox.style.display = 'block';
+        return;
+      }
+      showToast('تم تغيير كلمة السر بنجاح');
+      document.getElementById('force-change-screen').style.display = 'none';
+      enterApp();
+    });
+  }
+
+  function handleLogout() {
+    apiAuth('logout').finally(() => {
+      APP_STATE.token = null;
+      APP_STATE.user = null;
+      document.getElementById('app-shell').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('login-username').value = '';
+      document.getElementById('login-password').value = '';
+    });
+  }
+
+  // ============ دخول التطبيق بعد تسجيل الدخول ============
+  function enterApp() {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-shell').style.display = 'flex';
+
+    const user = APP_STATE.user;
+    document.getElementById('user-name').textContent = user.fullName;
+    document.getElementById('user-role').textContent = roleLabel(user.role);
+    document.getElementById('user-avatar').textContent = user.fullName.charAt(0);
+
+    renderNav();
+    navigateTo(NAV_ITEMS.find(n => n.roles.includes(user.role)).id);
+  }
+
+  function roleLabel(role) {
+    if (role === 'admin') return 'أدمن';
+    if (role === 'supervisor') return 'مشرف';
+    return 'مقيّم';
+  }
+
+  function renderNav() {
+    const container = document.getElementById('nav-container');
+    container.innerHTML = '';
+    NAV_ITEMS.filter(item => item.roles.includes(APP_STATE.user.role)).forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'nav-item';
+      div.id = 'nav-' + item.id;
+      div.onclick = () => navigateTo(item.id);
+      div.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${item.icon}</svg>${item.label}`;
+      container.appendChild(div);
+    });
+  }
+
+  function navigateTo(pageId) {
+    APP_STATE.currentPage = pageId;
+    document.getElementById('page-title').textContent = PAGE_TITLES[pageId];
+
+    NAV_ITEMS.forEach(item => {
+      const el = document.getElementById('nav-' + item.id);
+      if (el) el.classList.toggle('active', item.id === pageId);
+    });
+
+    Object.keys(PAGE_TITLES).forEach(id => {
+      document.getElementById('page-' + id).style.display = (id === pageId) ? 'block' : 'none';
+    });
+
+    loadPage(pageId);
+
+    if (window.innerWidth <= 900) document.getElementById('sidebar').classList.remove('open');
+  }
+
+  function loadPage(pageId) {
+    const loaders = {
+      'new-evaluation': loadNewEvaluationPage,
+      'my-reports': loadMyReportsPage,
+      'comprehensive-reports': loadComprehensiveReportsPage,
+      'agents-management': loadAgentsManagementPage,
+      'assignments': loadAssignmentsPage,
+      'criteria-management': loadCriteriaManagementPage,
+      'users-management': loadUsersManagementPage,
+      'audit-log': loadAuditLogPage
+    };
+    if (loaders[pageId]) loaders[pageId]();
+  }
+
+  // ============ أدوات مساعدة عامة للواجهة ============
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  function formatDateTime(value) {
+    if (!value) return '-';
+    const d = new Date(value);
+    return d.toLocaleDateString('ar-LY') + ' ' + d.toLocaleTimeString('ar-LY', {hour: '2-digit', minute:'2-digit'});
+  }
+
+  function scoreBadgeClass(score) {
+    if (score >= 85) return 'badge-success';
+    if (score >= 65) return 'badge-warning';
+    return 'badge-danger';
+  }
+
+  function scoreDialColor(score) {
+    if (score >= 85) return 'var(--success)';
+    if (score >= 65) return 'var(--warning)';
+    return 'var(--danger)';
+  }
+
+  /**
+   * يبني عنصر "قرص الدرجة" الدائري المميز — يُستخدم بكل مكان يُعرض فيه score
+   */
+  function renderScoreDial(score, size = 64) {
+    const radius = (size / 2) - 6;
+    const circumference = 2 * Math.PI * radius;
+    const pct = Math.max(0, Math.min(100, score || 0)) / 100;
+    const offset = circumference * (1 - pct);
+    const color = scoreDialColor(score);
+    return `
+      <div class="score-dial" style="width:${size}px;height:${size}px;">
+        <svg width="${size}" height="${size}">
+          <circle class="dial-arc-bg" cx="${size/2}" cy="${size/2}" r="${radius}" fill="none" stroke-width="6"/>
+          <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="none" stroke="${color}" stroke-width="6"
+            stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"
+            style="transition: stroke-dashoffset 0.6s ease;"/>
+        </svg>
+        <div class="dial-value" style="font-size:${size/4}px; color:${color};">${score !== null && score !== undefined ? Math.round(score) : '-'}</div>
+      </div>`;
+  }
+
+  // ============ فتح/إغلاق القائمة الجانبية بالجوال ============
+  document.addEventListener('DOMContentLoaded', () => {
+    // اختياري: زر همبرغر للجوال ممكن يُضاف لاحقاً
+  });
+</script>
