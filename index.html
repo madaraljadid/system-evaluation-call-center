@@ -320,12 +320,12 @@
 
       <div class="form-group">
         <label class="form-label">👤 اسم المستخدم</label>
-        <input type="text" id="login-username" class="form-control" placeholder="أدخل اسم المستخدم">
+        <input type="text" id="login-username" class="form-control" placeholder="أدخل اسم المستخدم" value="admin">
       </div>
 
       <div class="form-group">
         <label class="form-label">🔒 كلمة السر</label>
-        <input type="password" id="login-password" class="form-control" placeholder="أدخل كلمة السر">
+        <input type="password" id="login-password" class="form-control" placeholder="أدخل كلمة السر" value="admin123">
       </div>
 
       <button class="btn btn-primary" onclick="handleLogin()">
@@ -390,6 +390,11 @@
   <!-- ===== JavaScript ===== -->
   <script>
     // ============================================================
+    // رابط Google Apps Script - ✅ الصحيح
+    // ============================================================
+    var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl9zjZNztraTVr9hqnSYGYXZks_2E347DzikKei8p2Zmf946J1poCnpNIANXxpdDKsbA/exec';
+
+    // ============================================================
     // الحالة العامة
     // ============================================================
     var APP_STATE = {
@@ -397,11 +402,6 @@
       user: null,
       currentPage: null
     };
-
-    // ============================================================
-    // رابط Apps Script - ⚠️ استبدل هذا الرابط
-    // ============================================================
-    var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl9zjZNztraTVr9hqnSYGYXZks_2E347DzikKei8p2Zmf946J1poCnpNIANXxpdDKsbA/exec';
 
     // ============================================================
     // دوال API
@@ -424,28 +424,33 @@
               })
               [functionName](...args);
           } else {
-            // GitHub Pages - استخدام fetch
-            var payload = {
-              action: functionName,
-              args: args,
-              token: APP_STATE.token
-            };
+            // GitHub Pages - استخدام iframe بدلاً من fetch
+            var iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
             
-            fetch(SCRIPT_URL, {
-              method: 'POST',
-              mode: 'no-cors',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            })
-            .then(function(response) { return response.json(); })
-            .then(function(result) {
-              console.log('✅ API Success:', result);
-              resolve(result);
-            })
-            .catch(function(error) {
-              console.error('❌ API Error:', error);
-              reject(error);
+            var messageId = Date.now() + '_' + Math.random();
+            
+            var timeout = setTimeout(function() {
+              document.body.removeChild(iframe);
+              reject(new Error('انتهت مهلة الاتصال بالخادم'));
+            }, 30000);
+            
+            window.addEventListener('message', function handler(event) {
+              if (event.data && event.data.messageId === messageId) {
+                clearTimeout(timeout);
+                window.removeEventListener('message', handler);
+                document.body.removeChild(iframe);
+                
+                if (event.data.success) {
+                  resolve(event.data.result);
+                } else {
+                  reject(new Error(event.data.error || 'خطأ في الخادم'));
+                }
+              }
             });
+            
+            iframe.src = SCRIPT_URL + '?action=' + functionName + '&args=' + encodeURIComponent(JSON.stringify(args));
           }
         } catch (e) {
           console.error('❌ API Exception:', e);
@@ -581,14 +586,17 @@
     }
 
     function navigateTo(pageId) {
-      document.getElementById('page-title').textContent = pageId === 'new-evaluation' ? 'تقييم مكالمة جديدة' :
-                                                          pageId === 'my-reports' ? 'تقاريري' :
-                                                          pageId === 'comprehensive-reports' ? 'التقارير الشاملة' :
-                                                          pageId === 'agents-management' ? 'إدارة الموظفين' :
-                                                          pageId === 'assignments' ? 'توزيع الموظفين' :
-                                                          pageId === 'criteria-management' ? 'إدارة المعايير' :
-                                                          pageId === 'users-management' ? 'إدارة المستخدمين' :
-                                                          'سجل التعديلات';
+      var titles = {
+        'new-evaluation': 'تقييم مكالمة جديدة',
+        'my-reports': 'تقاريري',
+        'comprehensive-reports': 'التقارير الشاملة',
+        'agents-management': 'إدارة الموظفين',
+        'assignments': 'توزيع الموظفين',
+        'criteria-management': 'إدارة المعايير',
+        'users-management': 'إدارة المستخدمين',
+        'audit-log': 'سجل التعديلات'
+      };
+      document.getElementById('page-title').textContent = titles[pageId] || pageId;
 
       var pages = ['new-evaluation', 'my-reports', 'comprehensive-reports', 'agents-management', 'assignments', 'criteria-management', 'users-management', 'audit-log'];
       pages.forEach(function(id) {
