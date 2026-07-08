@@ -6,9 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>نظام تقييم جودة الأداء</title>
   
-  <!-- ============================================================
-       التصميم (تم دمجه مباشرة ليعمل على GitHub Pages)
-       ============================================================ -->
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
 
@@ -477,7 +474,7 @@
   <div id="toast-container" style="position:fixed; bottom:24px; left:24px; z-index:9999; display:flex; flex-direction:column; gap:10px;"></div>
 
   <!-- ============================================================
-       JavaScript
+       جافا سكريبت - كل الكود في ملف واحد
        ============================================================ -->
   <script>
     // ============================================================
@@ -488,6 +485,79 @@
       user: null,
       currentPage: null
     };
+
+    // ============================================================
+    // رابط Google Apps Script - ⚠️ استبدل هذا الرابط
+    // ============================================================
+    // ⚠️ IMPORTANT: استبدل هذا الرابط برابط Apps Script الخاص بك
+    var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl9zjZNztraTVr9hqnSYGYXZks_2E347DzikKei8p2Zmf946J1poCnpNIANXxpdDKsbA/exec';
+
+    // ============================================================
+    // دوال API الأساسية - تتصل بـ Google Apps Script
+    // ============================================================
+
+    function api(functionName, ...args) {
+      console.log('📡 Calling API:', functionName, args);
+      
+      return new Promise(function(resolve, reject) {
+        try {
+          // استخدام google.script.run (يعمل فقط داخل Apps Script)
+          // إذا كنت في GitHub Pages، استخدم fetch أو iframe
+          
+          // محاولة استخدام google.script.run أولاً
+          if (typeof google !== 'undefined' && google.script) {
+            google.script.run
+              .withSuccessHandler(function(result) {
+                console.log('✅ API Success - ' + functionName + ':', result);
+                resolve(result);
+              })
+              .withFailureHandler(function(error) {
+                console.error('❌ API Error - ' + functionName + ':', error);
+                reject(error);
+              })
+              [functionName](...args);
+          } else {
+            // إذا كنا في GitHub Pages، استخدم fetch
+            var payload = {
+              action: functionName,
+              args: args,
+              token: APP_STATE.token
+            };
+            
+            fetch(SCRIPT_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(payload)
+            })
+            .then(function(response) {
+              return response.json();
+            })
+            .then(function(result) {
+              console.log('✅ API Success - ' + functionName + ':', result);
+              resolve(result);
+            })
+            .catch(function(error) {
+              console.error('❌ API Error - ' + functionName + ':', error);
+              reject(error);
+            });
+          }
+        } catch (e) {
+          console.error('❌ API Exception:', e);
+          reject(e);
+        }
+      });
+    }
+
+    function apiAuth(functionName, ...args) {
+      if (!APP_STATE || !APP_STATE.token) {
+        showToast('الرجاء تسجيل الدخول مرة أخرى', 'error');
+        return Promise.reject(new Error('لا يوجد رمز جلسة'));
+      }
+      return api(functionName, APP_STATE.token, ...args);
+    }
 
     // ============================================================
     // قائمة الصفحات
@@ -521,38 +591,6 @@
       'users-management': 'إدارة المستخدمين',
       'audit-log': 'سجل التعديلات'
     };
-
-    // ============================================================
-    // دوال API - تتصل بـ Google Apps Script
-    // ============================================================
-
-    function api(functionName, ...args) {
-      return new Promise(function(resolve, reject) {
-        try {
-          google.script.run
-            .withSuccessHandler(function(result) {
-              console.log('✅ API Success - ' + functionName + ':', result);
-              resolve(result);
-            })
-            .withFailureHandler(function(error) {
-              console.error('❌ API Error - ' + functionName + ':', error);
-              reject(error);
-            })
-            [functionName](...args);
-        } catch (e) {
-          console.error('❌ API Exception:', e);
-          reject(e);
-        }
-      });
-    }
-
-    function apiAuth(functionName, ...args) {
-      if (!APP_STATE || !APP_STATE.token) {
-        showToast('الرجاء تسجيل الدخول مرة أخرى', 'error');
-        return Promise.reject(new Error('لا يوجد رمز جلسة'));
-      }
-      return api(functionName, APP_STATE.token, ...args);
-    }
 
     // ============================================================
     // دوال مساعدة
@@ -606,11 +644,12 @@
 
       btnText.innerHTML = '<span class="loader"></span>';
 
+      // استدعاء login مباشرة
       api('login', userVal, passVal)
         .then(function(res) {
           btnText.textContent = '🚀 تسجيل الدخول';
-          if (!res.success) {
-            errorBox.textContent = res.message;
+          if (!res || !res.success) {
+            errorBox.textContent = res ? res.message : 'خطأ في الاتصال';
             errorBox.style.display = 'block';
             return;
           }
@@ -631,7 +670,7 @@
         })
         .catch(function(err) {
           btnText.textContent = '🚀 تسجيل الدخول';
-          errorBox.textContent = 'حدث خطأ، حاول مرة أخرى';
+          errorBox.textContent = 'حدث خطأ: ' + (err.message || 'خطأ غير معروف');
           errorBox.style.display = 'block';
           console.error('Login error:', err);
         });
@@ -668,14 +707,18 @@
 
       apiAuth('changeMyPassword', oldVal, newVal)
         .then(function(res) {
-          if (!res.success) {
-            errorBox.textContent = res.message;
+          if (!res || !res.success) {
+            errorBox.textContent = res ? res.message : 'فشل تغيير كلمة السر';
             errorBox.style.display = 'block';
             return;
           }
           showToast('تم تغيير كلمة السر بنجاح', 'success');
           document.getElementById('force-change-screen').style.display = 'none';
           enterApp();
+        })
+        .catch(function(err) {
+          errorBox.textContent = 'حدث خطأ: ' + (err.message || 'خطأ غير معروف');
+          errorBox.style.display = 'block';
         });
     }
 
@@ -746,18 +789,26 @@
     }
 
     function loadPage(pageId) {
-      // الدوال موجودة في الملفات الأخرى (يتم تحميلها عبر Apps Script)
-      var loaders = {
-        'new-evaluation': function() { if (typeof loadNewEvaluationPage === 'function') loadNewEvaluationPage(); },
-        'my-reports': function() { if (typeof loadMyReportsPage === 'function') loadMyReportsPage(); },
-        'comprehensive-reports': function() { if (typeof loadComprehensiveReportsPage === 'function') loadComprehensiveReportsPage(); },
-        'agents-management': function() { if (typeof loadAgentsManagementPage === 'function') loadAgentsManagementPage(); },
-        'assignments': function() { if (typeof loadAssignmentsPage === 'function') loadAssignmentsPage(); },
-        'criteria-management': function() { if (typeof loadCriteriaManagementPage === 'function') loadCriteriaManagementPage(); },
-        'users-management': function() { if (typeof loadUsersManagementPage === 'function') loadUsersManagementPage(); },
-        'audit-log': function() { if (typeof loadAuditLogPage === 'function') loadAuditLogPage(); }
-      };
-      if (loaders[pageId]) loaders[pageId]();
+      // هذه الدوال سيتم تحميلها من الملفات الأخرى
+      console.log('📄 Loading page:', pageId);
+      var container = document.getElementById('page-' + pageId);
+      if (container) {
+        container.innerHTML = '<div class="card"><span class="loader"></span> جارِ التحميل...</div>';
+      }
+      
+      // محاولة تحميل الصفحة من Apps Script
+      apiAuth('loadPage', pageId)
+        .then(function(res) {
+          if (res && res.success && res.html) {
+            if (container) container.innerHTML = res.html;
+          }
+        })
+        .catch(function(err) {
+          console.warn('Could not load page from server:', err);
+          if (container) {
+            container.innerHTML = '<div class="card">❌ تعذر تحميل الصفحة. يرجى التأكد من اتصال الخادم.</div>';
+          }
+        });
     }
 
     // ============================================================
